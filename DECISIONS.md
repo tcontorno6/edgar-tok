@@ -155,6 +155,17 @@ trained with the line-mode tokenizer is a separate empirical question. The
 ladder is reported as: fair-fight win (gpt2 mode) + how far domain
 tokenization can go when each constraint is relaxed.
 
+## D-020 · Cross-form probe: out-of-form generalization measured, not assumed — `implemented`
+The training corpus is ~96% 10-K text, so claims are scoped to "SEC
+disclosure filings" only after measuring transfer. The probe: fetch forms the
+tokenizer never trained on (10-Q, 8-K, DEF 14A; per-form sampling so 8-K
+volume doesn't swamp the mix), clean with `--min-chars 1500` (8-K primary
+documents are legitimately short), and benchmark them as an EVAL-ONLY set
+(`benchmark.py --eval-dir`). The slice table adapts to whatever forms the
+eval set contains. Baselines now include OpenAI's cl100k_base (GPT-4) and
+o200k_base (GPT-4o/o-series) via tiktoken — official BPE files, so the
+"current generation" claim covers OpenAI, Qwen, and (once unlocked) Llama 3.
+
 ## D-013 · Corpus expansion samples ≤1 filing per company, spread over years — `implemented (fetch_10ks.py)`
 The expansion fetch walks the quarterly master indexes (2013–2024 default),
 takes at most one 10-K per CIK, fills per-year quotas from a seeded shuffle,

@@ -95,12 +95,21 @@ python train_tokenizer.py --vocab-size 65536 131072 --pretok line
 python benchmark.py --ours tokenizers\edgar-bpe-65536 tokenizers\edgar-bpe-65536-digits tokenizers\edgar-bpe-65536-line tokenizers\edgar-bpe-131072-line
 ```
 
-Results land in `docs\BENCHMARK.md` + `docs\benchmark_per_doc.csv`. Baselines
-download from the Hugging Face hub on first use; GPT-2 and Qwen are open,
+Results land in `docs\BENCHMARK.md` + `docs\benchmark_per_doc.csv`. Baselines:
+GPT-2 and Qwen download from the Hugging Face hub; cl100k/o200k (GPT-4 /
+GPT-4o) come from OpenAI's official BPE files via tiktoken;
 **Llama 3 is license-gated** — accept it at
 huggingface.co/meta-llama/Meta-Llama-3-8B, then `pip install huggingface_hub[cli]`
 and `hf auth login`, and rerun. Unavailable baselines are skipped
 with a warning, never fatal.
+
+Cross-form probe (D-020) — measure generalization to forms never trained on:
+
+```powershell
+python fetch_10ks.py --forms "10-Q,8-K,DEF 14A" --target 450 --years 2015-2024 --out data\raw_probe --index-cache-src ..\ma-target-screener\data\cache\edgar
+python clean.py --input data\raw_probe --output data\clean_probe --min-chars 1500
+python benchmark.py --ours tokenizers\edgar-bpe-65536 tokenizers\edgar-bpe-65536-digits tokenizers\edgar-bpe-65536-line tokenizers\edgar-bpe-131072-line --eval-dir data\clean_probe --out-dir docs\probe
+```
 
 ## Phase plan
 

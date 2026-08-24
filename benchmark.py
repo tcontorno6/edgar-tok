@@ -83,14 +83,24 @@ def load_ours(path: Path) -> Tok:
     return Tok(name, count, tk.get_vocab_size())
 
 
-def load_baseline(name: str, hf_id: str) -> Tok | None:
+def load_baseline(name: str, spec: str) -> Tok | None:
+    """spec is an HF id ('gpt2', 'Qwen/Qwen3-8B') or 'tiktoken:<encoding>'
+    for OpenAI tokenizers (cl100k_base = GPT-4, o200k_base = GPT-4o/o-series,
+    loaded from OpenAI's official BPE files via the tiktoken package)."""
     try:
+        if spec.startswith("tiktoken:"):
+            import tiktoken
+            enc = tiktoken.get_encoding(spec.split(":", 1)[1])
+            # disallowed_special=() so literal special-token text in a filing
+            # can never raise — we are counting, not prompting
+            return Tok(name, lambda s: len(enc.encode(s, disallowed_special=())),
+                       enc.n_vocab)
         from transformers import AutoTokenizer
-        tk = AutoTokenizer.from_pretrained(hf_id)
+        tk = AutoTokenizer.from_pretrained(spec)
         return Tok(name, lambda s: len(tk(s, add_special_tokens=False)["input_ids"]),
                    len(tk))
     except Exception as exc:
-        print(f"  ! baseline '{name}' ({hf_id}) unavailable — skipped "
+        print(f"  ! baseline '{name}' ({spec}) unavailable — skipped "
               f"({type(exc).__name__}: {str(exc)[:100]})", file=sys.stderr)
         return None
 
@@ -107,12 +117,19 @@ def form(p: Path) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval-list", type=Path, default=Path("data/splits/eval_docs.txt"))
+    ap.add_argument("--eval-dir", type=Path, default=None,
+                    help="benchmark every .txt in this dir instead of --eval-list "
+                         "(used for the cross-form probe, D-020)")
     ap.add_argument("--ours", nargs="+", type=Path, required=True,
                     help="dir(s) containing tokenizer.json from train_tokenizer.py")
     ap.add_argument("--baselines", nargs="*",
-                    default=["gpt2=gpt2", "qwen3=Qwen/Qwen3-8B",
+                    default=["gpt2=gpt2",
+                             "cl100k=tiktoken:cl100k_base",
+                             "o200k=tiktoken:o200k_base",
+                             "qwen3=Qwen/Qwen3-8B",
                              "llama3=meta-llama/Meta-Llama-3-8B"],
-                    help="name=hf_id pairs; unavailable ones are skipped")
+                    help="name=spec pairs (HF id or tiktoken:<encoding>); "
+                         "unavailable ones are skipped")
     ap.add_argument("--max-docs", type=int, default=None, help="cap eval docs (quick runs)")
     ap.add_argument("--pattern-sample", type=int, default=2000,
                     help="max instances per pattern to tokenize (seeded)")
@@ -120,11 +137,19 @@ def main() -> int:
     ap.add_argument("--out-dir", type=Path, default=Path("docs"))
     args = ap.parse_args()
 
-    docs = [Path(ln) for ln in args.eval_list.read_text(encoding="utf-8").splitlines()
-            if ln.strip()]
+    if args.eval_dir:
+        docs = sorted(args.eval_dir.glob("*.txt"))
+    else:
+        docs = [Path(ln) for ln in args.eval_list.read_text(encoding="utf-8").splitlines()
+                if ln.strip()]
     if args.max_docs:
         docs = docs[: args.max_docs]
-    print(f"eval set: {len(docs)} held-out documents")
+    print(f"eval set: {len(docs)} held-out documents"
+          + (f" from {args.eval_dir}" if args.eval_dir else ""))
+    if not docs:
+        print("no eval documents — nothing to benchmark "
+              "(did the fetch/clean steps run?)", file=sys.stderr)
+        return 1
 
     toks: list[Tok] = [load_ours(p) for p in args.ours]
     for spec in args.baselines:
@@ -148,11 +173,13 @@ def main() -> int:
             per_doc.append((p, n, nbytes))
             rows.append({"tokenizer": tk.name, "doc": p.name, "tokens": n, "bytes": nbytes})
         tot = sum(n for _, n, _ in per_doc)
+        # form slices adapt to whatever forms the eval set contains (D-020)
+        form_labels = sorted({form(p) for p, _, _ in per_doc})
+        slice_defs = [(fm, (lambda p, fm=fm: form(p) == fm)) for fm in form_labels]
+        slice_defs += [("pre-2019", lambda p: era(p) == "pre-2019"),
+                       ("2019+", lambda p: era(p) == "2019+")]
         slice_bpt = {}
-        for label, pred in [("10K", lambda p: form(p) == "10K"),
-                            ("13D", lambda p: form(p) == "13D"),
-                            ("pre-2019", lambda p: era(p) == "pre-2019"),
-                            ("2019+", lambda p: era(p) == "2019+")]:
+        for label, pred in slice_defs:
             sel = [(n, b) for p, n, b in per_doc if pred(p)]
             if sel:
                 slice_bpt[label] = sum(b for _, b in sel) / max(1, sum(n for n, _ in sel))
@@ -203,12 +230,17 @@ def main() -> int:
             fh.write(f"| {name} | {r['vocab']:,} | {r['tokens']:,} | {r['bpt']:.3f} | "
                      f"{'—' if name == toks[0].name else f'{rel:+.1f}% tokens'} | "
                      f"{int(r['median_10k_tokens']):,} |\n")
-        fh.write("\n## Slices (bytes/token)\n\n| tokenizer | 10-K | 13D | pre-2019 | 2019+ |\n|---|---|---|---|---|\n")
+        slice_cols: list[str] = []
+        for r in results.values():
+            for k in r["slices"]:
+                if k not in slice_cols:
+                    slice_cols.append(k)
+        fh.write("\n## Slices (bytes/token)\n\n| tokenizer | "
+                 + " | ".join(slice_cols) + " |\n|" + "---|" * (len(slice_cols) + 1) + "\n")
         for name, r in results.items():
             s = r["slices"]
             fh.write(f"| {name} | " + " | ".join(
-                f"{s.get(k, float('nan')):.3f}" if k in s else "—"
-                for k in ("10K", "13D", "pre-2019", "2019+")) + " |\n")
+                f"{s[k]:.3f}" if k in s else "—" for k in slice_cols) + " |\n")
         fh.write("\n## Domain patterns (mean tokens per instance — lower is better)\n\n")
         cols = [t.name for t in toks]
         fh.write("| pattern | n in eval | " + " | ".join(cols) + " |\n|" + "---|" * (len(cols) + 2) + "\n")

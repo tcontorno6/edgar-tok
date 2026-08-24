@@ -44,7 +44,7 @@ from edgar_min.client import BASE_WWW
 
 log = logging.getLogger("fetch")
 
-MANIFEST_FIELDS = ["cik", "accession", "filed", "year", "company",
+MANIFEST_FIELDS = ["cik", "accession", "filed", "year", "form", "company",
                    "status", "bytes", "url", "note"]
 # statuses that should NOT be retried on resume (add "error" via --retry-errors=False default)
 DONE_STATUSES = {"ok", "ok_existing", "no_primary_doc", "no_match"}
@@ -56,6 +56,7 @@ class IndexRow:
     company: str
     filed: str        # YYYY-MM-DD
     accession: str    # dashed, e.g. 0001193125-16-624286
+    form: str = "10-K"  # exact EDGAR form string
 
     @property
     def accession_nodash(self) -> str:
@@ -64,6 +65,12 @@ class IndexRow:
     @property
     def year(self) -> int:
         return int(self.filed[:4])
+
+    @property
+    def form_tag(self) -> str:
+        """Filename-safe form: '10-K'->'10K', 'DEF 14A'->'DEF14A' (matches the
+        existing corpus convention)."""
+        return re.sub(r"[^A-Za-z0-9]", "", self.form)
 
 
 # ---------------------------------------------------------------- indexes --
@@ -95,9 +102,10 @@ def load_master_index(
     return raw.decode("utf-8", errors="replace").splitlines()
 
 
-def parse_10k_rows(lines: list[str]) -> list[IndexRow]:
+def parse_index_rows(lines: list[str], forms: frozenset[str]) -> list[IndexRow]:
     """master.idx body: CIK|Company Name|Form Type|Date Filed|Filename.
-    Form filter is exact '10-K' — amendments (10-K/A) excluded (D-013)."""
+    Form filter is an exact-string match against EDGAR form names — amendments
+    ('10-K/A') are separate strings and excluded unless requested (D-013)."""
     out: list[IndexRow] = []
     in_body = False
     for line in lines:
@@ -109,13 +117,13 @@ def parse_10k_rows(lines: list[str]) -> list[IndexRow]:
         if len(parts) != 5:
             continue
         cik_raw, name, form, filed, fname = (p.strip() for p in parts)
-        if form != "10-K":
+        if form not in forms:
             continue
         m = re.search(r"(\d{10}-\d{2}-\d{6})\.txt$", fname)
         if not m or not re.match(r"^\d{4}-\d{2}-\d{2}$", filed):
             continue
         try:
-            out.append(IndexRow(pad_cik(cik_raw), name, filed, m.group(1)))
+            out.append(IndexRow(pad_cik(cik_raw), name, filed, m.group(1), form))
         except ValueError:
             continue
     return out
@@ -203,6 +211,10 @@ def parse_years(spec: str) -> list[int]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Bulk-fetch 10-K primary documents for the tokenizer corpus.")
     ap.add_argument("--target", type=int, default=4000, help="filings to fetch (default 4000)")
+    ap.add_argument("--forms", default="10-K",
+                    help="comma-separated exact EDGAR form names, e.g. "
+                         "'10-Q,8-K,DEF 14A' (default 10-K). With multiple "
+                         "forms the target is split evenly per form.")
     ap.add_argument("--years", default="2013-2024",
                     help="'2013-2024' or '2015,2018,2021' (default 2013-2024)")
     ap.add_argument("--seed", type=int, default=42, help="sampling seed (default 42)")
@@ -240,20 +252,29 @@ def main() -> int:
                              requests_per_sec=args.rps)
 
     # 1. CHOOSE ---------------------------------------------------------------
+    forms = [f.strip() for f in args.forms.split(",") if f.strip()]
+    formset = frozenset(forms)
     all_rows: list[IndexRow] = []
     for year in years:
         for qtr in (1, 2, 3, 4):
             lines = load_master_index(client, year, qtr, args.cache, args.index_cache_src)
-            rows = parse_10k_rows(lines)
-            all_rows.extend(rows)
-        log.info("indexes %d: %d cumulative 10-K rows", year, len(all_rows))
+            all_rows.extend(parse_index_rows(lines, formset))
+        log.info("indexes %d: %d cumulative matching rows", year, len(all_rows))
 
-    picked = sample_rows(all_rows, args.target, years, exclude, args.seed)
+    # per-form sampling: without it, high-volume forms (8-K) would swamp the
+    # sample; CIK-dedupe applies within each form (D-020)
+    per_form_target = max(1, args.target // len(forms))
+    picked: list[IndexRow] = []
+    for fm in forms:
+        picked.extend(sample_rows([r for r in all_rows if r.form == fm],
+                                  per_form_target, years, exclude, args.seed))
     if args.limit:
         picked = picked[: args.limit]
 
     per_year = Counter(r.year for r in picked)
-    log.info("selected %d filings across %d companies:", len(picked), len({r.cik for r in picked}))
+    per_form = Counter(r.form for r in picked)
+    log.info("selected %d filings across %d companies: %s",
+             len(picked), len({(r.cik, r.form) for r in picked}), dict(per_form))
     for y in years:
         log.info("  %d: %5d available -> %4d selected",
                  y, sum(1 for r in all_rows if r.year == y), per_year.get(y, 0))
@@ -278,9 +299,9 @@ def main() -> int:
     t0 = time.time()
     try:
         for i, r in enumerate(todo, 1):
-            dest = args.out / f"{r.cik}_{r.accession_nodash}_10K.htm"
+            dest = args.out / f"{r.cik}_{r.accession_nodash}_{r.form_tag}.htm"
             base = dict(cik=r.cik, accession=r.accession_nodash, filed=r.filed,
-                        year=r.year, company=r.company)
+                        year=r.year, form=r.form, company=r.company)
             try:
                 if dest.exists() and dest.stat().st_size > 0:
                     counts["ok_existing"] += 1
@@ -289,7 +310,7 @@ def main() -> int:
                 # find this accession in the company's submissions feed
                 filed_d = date.fromisoformat(r.filed)
                 match = None
-                for f in iter_filings(client, r.cik, forms=frozenset({"10-K"}),
+                for f in iter_filings(client, r.cik, forms=frozenset({r.form}),
                                       since=filed_d):
                     if f.accession_nodash == r.accession_nodash:
                         match = f

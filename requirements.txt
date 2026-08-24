@@ -12,3 +12,4 @@ pydantic>=2.7
 # --- Phase 2: tokenizer training + benchmark (no PyTorch needed) ---
 tokenizers>=0.22
 transformers>=4.44     # baseline tokenizers only (gpt2 / Qwen / Llama 3)
+tiktoken>=0.7          # OpenAI baselines: cl100k_base (GPT-4), o200k_base (GPT-4o)

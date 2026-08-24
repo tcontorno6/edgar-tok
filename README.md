@@ -77,6 +77,31 @@ python clean.py --input data\raw --output data\clean_expansion
 python inspect_corpus.py --corpus data\clean_expansion
 ```
 
+## Running Phase 2 (train + benchmark)
+
+```powershell
+pip install -r requirements.txt                  # picks up tokenizers + transformers
+python split_corpus.py                           # held-out eval set FIRST (D-014)
+python train_tokenizer.py --vocab-size 32768 65536 131072
+python train_tokenizer.py --vocab-size 65536 --normalize    # D-001 ablation twin
+python benchmark.py --ours tokenizers\edgar-bpe-32768 tokenizers\edgar-bpe-65536 tokenizers\edgar-bpe-131072 tokenizers\edgar-bpe-65536-norm
+```
+
+Phase 2.5 — the pre-tokenization ladder (D-019), after the standard runs:
+
+```powershell
+python train_tokenizer.py --vocab-size 65536 --pretok digits
+python train_tokenizer.py --vocab-size 65536 131072 --pretok line
+python benchmark.py --ours tokenizers\edgar-bpe-65536 tokenizers\edgar-bpe-65536-digits tokenizers\edgar-bpe-65536-line tokenizers\edgar-bpe-131072-line
+```
+
+Results land in `docs\BENCHMARK.md` + `docs\benchmark_per_doc.csv`. Baselines
+download from the Hugging Face hub on first use; GPT-2 and Qwen are open,
+**Llama 3 is license-gated** — accept it at
+huggingface.co/meta-llama/Meta-Llama-3-8B, then `pip install huggingface_hub[cli]`
+and `hf auth login`, and rerun. Unavailable baselines are skipped
+with a warning, never fatal.
+
 ## Phase plan
 
 1. **Corpus** — seed cleaned ✔ (357 docs, 82 MB, ~20.5M tokens); expansion

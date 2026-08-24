@@ -96,6 +96,65 @@ whitespace, and GPT-2/Llama-style pretokenizers split punctuation from
 letters regardless, so BPE merge learning is unaffected. Revisit only if the
 trained vocab shows `•word` merges (it should not, given pretokenization).
 
+## D-014 · Held-out eval set: 5%, stratified, dedupe-aware — `implemented (split_corpus.py)`
+Benchmark numbers are computed ONLY on documents the tokenizer never trained
+on. 5% sampled per (form, filing-year) stratum, seeded; content-identical
+duplicates (co-registrant twins) are forced into TRAIN so no eval doc has a
+training twin; forms whose yearly strata are tiny (13Ds) get a per-form
+top-up so every form is represented in eval.
+
+## D-015 · Byte-level BPE with GPT-2-style pre-tokenization — `implemented (train_tokenizer.py)`
+Same tokenizer family as every baseline, so the benchmark isolates the
+VOCABULARY variable. Consequence to keep in mind: merges cannot cross
+pre-tokenization boundaries, and the GPT-2 regex splits digit runs at
+punctuation — so "3,232,193" is pre-chunked into 3|,|232|,|193 and can never
+become fewer than ~5 tokens for ANY vocab size. The same ceiling binds the
+baselines, so the comparison stays fair, but absolute dollar-amount
+compression is capped by this choice. A digit-friendly custom pre-tokenizer
+is the flagged Phase-2.5 ablation if we want to beat that ceiling.
+
+## D-016 · Vocab-size sweep: 32k / 64k / 128k — `implemented`
+32,768 approximates GPT-2-class vocabularies, 65,536 is the recommended
+primary, 131,072 matches Llama-3-class size for like-for-like comparison.
+Reported side by side; bigger vocab always compresses better, so claims
+should cite the size-matched comparison.
+
+## D-017 · Per-pattern costs measured standalone with a leading space — `implemented (benchmark.py)`
+Each regex match from the eval set is tokenized as " " + match. Rationale:
+byte-level BPE tokens are space-sensitive (mid-sentence tokens carry the
+leading space), so this measures each instance the way it overwhelmingly
+occurs in running text, without context effects from neighboring words.
+
+## D-018 · Unicode-normalization ablation applied at train/eval time — `implemented`
+`train_tokenizer.py --normalize` streams the corpus through the exact
+_NORMALIZE_MAP that clean.py ships (imported, not copied) rather than
+materializing a second corpus on disk. One source of truth for the map.
+
+## D-019 · Pre-tokenization ladder: gpt2 / digits / line — `implemented (train_tokenizer.py --pretok)`
+BPE merges cannot cross pre-tokenization chunk boundaries, so the chunking
+rule — not vocab size — sets the compression ceiling (see D-015). Three modes:
+
+- **gpt2** — ByteLevel's GPT-2 regex; identical constraints to the baselines.
+  This is the like-for-like comparison and the headline "fair fight" number.
+- **digits** — number expressions (`$1,234.56`, `4.25%`, `3,232,193`) are
+  kept as whole chunks so BPE can fuse them. Everything else as gpt2.
+- **line** — chunks are whole lines (≤256 bytes; learned tokens capped at
+  64 bytes), so merges may cross spaces and recurring boilerplate fuses into
+  phrase tokens (`pursuant_to_Rule_`, `CUSIP_No._`).
+
+Measured ladder (seed corpus, 32k vocab, held-out eval): standard 4.70
+bytes/token → digits 5.07 (−7.3% tokens) → line 7.02 (−33.1% tokens).
+
+Two honest caveats, to carry into the write-up: (1) digits/line numbers must
+be labeled "non-standard pre-tokenization" when compared against baselines —
+the bytes-per-token math is still apples-to-apples on identical text, but the
+tokenizers are no longer playing by the same chunking rules; (2) phrase
+tokens optimize compression, not necessarily downstream model quality —
+long rare tokens can hurt a model's compositional learning, so a model
+trained with the line-mode tokenizer is a separate empirical question. The
+ladder is reported as: fair-fight win (gpt2 mode) + how far domain
+tokenization can go when each constraint is relaxed.
+
 ## D-013 · Corpus expansion samples ≤1 filing per company, spread over years — `implemented (fetch_10ks.py)`
 The expansion fetch walks the quarterly master indexes (2013–2024 default),
 takes at most one 10-K per CIK, fills per-year quotas from a seeded shuffle,

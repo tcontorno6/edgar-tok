@@ -1,0 +1,10 @@
+{
+  "name": "edgar-bpe-32768",
+  "vocab_size": 32768,
+  "min_frequency": 2,
+  "normalize_unicode": false,
+  "train_seconds": 29.3,
+  "train_list": "data/splits/train_docs.txt",
+  "train_list_sha256": "ffc61abfd23420a8",
+  "n_train_docs": 4140
+}

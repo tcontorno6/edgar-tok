@@ -8,3 +8,7 @@ selectolax==0.4.11        # fast HTML parser (lexbor engine); pinned to the vers
 httpx>=0.27
 tenacity>=8.3
 pydantic>=2.7
+
+# --- Phase 2: tokenizer training + benchmark (no PyTorch needed) ---
+tokenizers>=0.22
+transformers>=4.44     # baseline tokenizers only (gpt2 / Qwen / Llama 3)

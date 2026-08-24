@@ -1,0 +1,13 @@
+{
+  "name": "edgar-bpe-131072-line",
+  "vocab_size": 131072,
+  "min_frequency": 4,
+  "pretokenizer": "line",
+  "normalize_unicode": false,
+  "train_seconds": 1631.3,
+  "train_list": "data/splits/train_docs.txt",
+  "train_list_sha256": "ffc61abfd23420a8",
+  "n_train_docs": 1500,
+  "subsampled": true,
+  "sample_seed": 42
+}

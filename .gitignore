@@ -1,0 +1,24 @@
+# data never goes in git — the corpus is rebuildable from EDGAR + the manifest
+data/
+
+# environments
+.venv/
+venv/
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# secrets / local config
+.env
+
+# logs
+*.log
+logs/
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store

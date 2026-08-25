@@ -1,0 +1,5 @@
+{
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "model_max_length": 1000000000,
+  "eos_token": "<|endoftext|>"
+}

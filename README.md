@@ -122,4 +122,9 @@ python benchmark.py --ours tokenizers\edgar-bpe-65536 tokenizers\edgar-bpe-65536
    numerics-dense targeted set (fetch per company via
    `edgar_min.EdgarClient.company_facts` — they are NOT in the old cache; see
    docs/FETCHER.md).
-4. **Write-up** — publish tokenizer + results.
+4. **Write-up** — [docs/WRITEUP.md](docs/WRITEUP.md); tokenizers published to
+   the Hugging Face Hub via `publish_hf.py`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
